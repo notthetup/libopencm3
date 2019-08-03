@@ -19,6 +19,8 @@
 
 #if defined(EFM32LG)
 #	include <libopencm3/efm32/lg/i2c.h>
+#elif defined(EFM32HG)
+#	include <libopencm3/efm32/hg/i2c.h>
 #else
 #	error "efm32 family not defined."
 #endif
