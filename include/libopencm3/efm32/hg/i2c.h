@@ -15,9 +15,11 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef LIBOPENCM3_GPIO_H
-#define LIBOPENCM3_GPIO_H
+#ifndef LIBOPENCM3_I2C_H
+#define LIBOPENCM3_I2C_H
 
 #include <libopencm3/efm32/common/i2c_common_hglg.h>
+
+#define _SILICON_LABS_32B_SERIES_0
 
 #endif
