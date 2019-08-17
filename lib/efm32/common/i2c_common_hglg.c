@@ -25,29 +25,20 @@
  * @param[in] freqRef Peripheral CLK frequency.
  * @param[in] freqScl I2C CLK (SCL) frequency to be set.
  */
-void i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl){
-	int32_t div;
-	if (!freqScl || !freqRef){ return; }
+int i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl){
+	if (!freqScl || !freqRef){ return 0; }
 
 	/* Set the CLHR (clock low to high ratio) to 4:4. */
 	I2C_CTRL(i2c) &= ~I2C_CTRL_CLHR_MASK;
 
 	/* SCL frequency is given by
-	 * freqScl = freqRef/((Nlow + Nhigh) * (DIV + 1) + I2C_CR_MAX)z
+	 * freqScl = freqRef/((Nlow + Nhigh) * (DIV + 1) + I2C_CR_MAX)
 	 * DIV = ((freqRef - (I2C_CR_MAX * freqScl))/((Nlow + Nhigh) * freqScl)) - 1
 	 */
 
-	div = ((freqRef - (I2C_CR_MAX * freqScl)) / (8 * freqScl)) - 1;
+	int32_t div = ((freqRef - (I2C_CR_MAX * freqScl)) / (8 * freqScl));
 	I2C_CLKDIV(i2c) = (uint32_t)div;
-}
-
-void i2c_init(uint32_t i2c, bool isMaster){
-	if (isMaster){
-		I2C_CTRL(i2c) &= ~I2C_CTRL_SLAVE;
-	}else{
-		I2C_CTRL(i2c) |= I2C_CTRL_SLAVE;
-	}
-	i2c_enable(i2c, true);
+	return div;
 }
 
 void i2c_enable(uint32_t i2c, bool enable){
@@ -58,9 +49,19 @@ void i2c_enable(uint32_t i2c, bool enable){
 	}
 }
 
-void i2c_write(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len){
+void i2c_init(uint32_t i2c, bool isMaster){
+	I2C_ROUTE(i2c) |= I2C_ROUTE_SDAPEN | I2C_ROUTE_SCLPEN | I2C_ROUTE_LOCATION_LOC4;
+	I2C_CTRL(i2c) |= I2C_CTRL_AUTOACK | I2C_CTRL_AUTOSN;
+	if (isMaster){
+		I2C_CTRL(i2c) &= ~I2C_CTRL_SLAVE;
+	}else{
+		I2C_CTRL(i2c) |= I2C_CTRL_SLAVE;
+	}
+	i2c_enable(i2c, true);
+}
 
-	uint32_t flags;
+int i2c_write(uint32_t i2c, uint8_t addr, uint8_t *txdata, uint16_t len){
+
 	uint16_t rem = len;
 
 	/* Check if in busy state. Since this SW assumes single master, we can */
@@ -82,46 +83,39 @@ void i2c_write(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len){
 	I2C_TXDATA(i2c)     = addr & 0xfe;
 	I2C_CMD(i2c)        = I2C_CMD_START;
 
-	flags = I2C_IF(i2c);
-	while (! (flags | I2C_IF_ERRORS |  I2C_IF_NACK | I2C_IF_ACK)){
-		flags = I2C_IF(i2c);
-	}
+	while (! (I2C_IF(i2c) & (I2C_IF_ERRORS |  I2C_IF_NACK | I2C_IF_ACK)));
 
 	/* If some sort of fault, abort transfer. */
-	if (flags & I2C_IF_ERRORS){
-		I2C_CMD(i2c) = I2C_CMD_ABORT;
-		return;
-	}
+	if (I2C_IF(i2c) & I2C_IF_ERRORS){ return -1;}
 
-	if (flags & I2C_IF_NACK) {
-		I2C_CMD(i2c) = I2C_CMD_STOP;
-		return;
+	if (I2C_IF(i2c) & I2C_IF_NACK) {
+		I2C_IFC(i2c) = I2C_IFC_NACK;
+		return -2;
 	}
 
 	I2C_IFC(i2c) = I2C_IFC_ACK;
 
 	while (rem > 0){
-		I2C_TXDATA(i2c) = data[len-rem] & 0xfe;
-		flags = I2C_IF(i2c);
-		while (! (flags |  I2C_IF_NACK | I2C_IF_ACK)){
-			flags = I2C_IF(i2c);
+		I2C_TXDATA(i2c) = txdata[len-rem] & 0xff;
+		while (! (I2C_IF(i2c) & ( I2C_IF_NACK | I2C_IF_ACK)));
+		if (I2C_IF(i2c) & I2C_IF_NACK) {
+			I2C_IFC(i2c) = I2C_IFC_NACK;
+			return -3;
 		}
-		if (flags & I2C_IF_NACK) {
-			I2C_CMD(i2c) = I2C_CMD_STOP;
-			return;
-		}
+
 		I2C_IFC(i2c) = I2C_IFC_ACK;
 		rem--;
 	}
 
 	I2C_CMD(i2c) = I2C_CMD_STOP;
+
+	return 0;
 }
 
-void i2c_read(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len){
+int i2c_read(uint32_t i2c, uint8_t addr, uint8_t *rxdata, uint16_t len){
 
-	if (len < 1) return;
+	if (len < 1) return -1;
 
-	uint32_t flags;
 	uint16_t rem = len;
 
 	/* Check if in busy state. Since this SW assumes single master, we can */
@@ -143,39 +137,33 @@ void i2c_read(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len){
 	I2C_TXDATA(i2c)     = (addr & 0xfe) | 0x01; // Set last bit to 1 to denote read
 	I2C_CMD(i2c)        = I2C_CMD_START;
 
-	flags = I2C_IF(i2c);
-	while (! (flags | I2C_IF_ERRORS |  I2C_IF_NACK | I2C_IF_ACK)){
-		flags = I2C_IF(i2c);
-	}
+	while (! (I2C_IF(i2c) & (I2C_IF_ERRORS |  I2C_IF_NACK | I2C_IF_ACK)));
 
 	/* If some sort of fault, abort transfer. */
-	if (flags & I2C_IF_ERRORS){
+	if (I2C_IF(i2c) & I2C_IF_ERRORS){
 		I2C_CMD(i2c) = I2C_CMD_ABORT;
-		return;
+		return -2 ;
 	}
 
-	if (flags & I2C_IF_NACK) {
-		I2C_CMD(i2c) = I2C_CMD_STOP;
-		return;
+	if (I2C_IF(i2c) & I2C_IF_NACK) {
+		I2C_IFC(i2c) = I2C_IFC_NACK;
+		return -3;
 	}
 
 	I2C_IFC(i2c) = I2C_IFC_ACK;
 
-	while (rem > 0){
-		flags = I2C_IF(i2c);
-		while (! (flags | I2C_IF_ERRORS | I2C_IF_RXDATAV)){
-			flags = I2C_IF(i2c);
-		}
+	while (rem > 0) {
+		while (! (I2C_IF(i2c) & (I2C_IF_ERRORS | I2C_IF_RXDATAV)));
 
-		if (flags & I2C_IF_ERRORS){
+		if (I2C_IF(i2c) & I2C_IF_ERRORS){
 			I2C_CMD(i2c) = I2C_CMD_ABORT;
-			return;
+			return -4;
 		}
 
-		data[rem-len] = I2C_RXDATA(i2c);
+		rxdata[len-rem] = I2C_RXDATA(i2c) & 0xFF;
 		rem--;
-		I2C_CMD(i2c) = I2C_CMD_ACK;
 	}
 
 	I2C_CMD(i2c) = I2C_CMD_STOP;
+	return 0;
 }
