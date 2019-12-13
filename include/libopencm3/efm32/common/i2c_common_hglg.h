@@ -291,13 +291,13 @@
 
 BEGIN_DECLS
 
-int i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl);
+void i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl);
 
 void i2c_init(uint32_t i2c, bool isMaster);
 void i2c_enable(uint32_t i2c, bool enable);
 
-int i2c_write(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len);
-int i2c_read(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len);
+int i2c_write(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len, bool stop);
+int i2c_read(uint32_t i2c, uint8_t addr, uint8_t *data, uint16_t len, bool stop);
 
 
 uint32_t getRXData (uint32_t);

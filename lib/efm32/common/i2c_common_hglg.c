@@ -25,8 +25,8 @@
  * @param[in] freqRef Peripheral CLK frequency.
  * @param[in] freqScl I2C CLK (SCL) frequency to be set.
  */
-int i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl){
-	if (!freqScl || !freqRef){ return 0; }
+void i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl){
+	if (!freqScl || !freqRef){ return; }
 
 	/* Set the CLHR (clock low to high ratio) to 4:4. */
 	I2C_CTRL(i2c) &= ~I2C_CTRL_CLHR_MASK;
@@ -38,7 +38,6 @@ int i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl){
 
 	int32_t div = ((freqRef - (I2C_CR_MAX * freqScl)) / (8 * freqScl));
 	I2C_CLKDIV(i2c) = (uint32_t)div;
-	return div;
 }
 
 void i2c_enable(uint32_t i2c, bool enable){
@@ -60,7 +59,7 @@ void i2c_init(uint32_t i2c, bool isMaster){
 	i2c_enable(i2c, true);
 }
 
-int i2c_write(uint32_t i2c, uint8_t addr, uint8_t *txdata, uint16_t len){
+int i2c_write(uint32_t i2c, uint8_t addr, uint8_t *txdata, uint16_t len, bool stop){
 
 	uint16_t rem = len;
 
@@ -86,11 +85,14 @@ int i2c_write(uint32_t i2c, uint8_t addr, uint8_t *txdata, uint16_t len){
 	while (! (I2C_IF(i2c) & (I2C_IF_ERRORS |  I2C_IF_NACK | I2C_IF_ACK)));
 
 	/* If some sort of fault, abort transfer. */
-	if (I2C_IF(i2c) & I2C_IF_ERRORS){ return -1;}
+	if (I2C_IF(i2c) & I2C_IF_ERRORS){
+		I2C_CMD(i2c) = I2C_CMD_ABORT;
+		return -2;
+	}
 
 	if (I2C_IF(i2c) & I2C_IF_NACK) {
 		I2C_IFC(i2c) = I2C_IFC_NACK;
-		return -2;
+		return -3;
 	}
 
 	I2C_IFC(i2c) = I2C_IFC_ACK;
@@ -100,19 +102,19 @@ int i2c_write(uint32_t i2c, uint8_t addr, uint8_t *txdata, uint16_t len){
 		while (! (I2C_IF(i2c) & ( I2C_IF_NACK | I2C_IF_ACK)));
 		if (I2C_IF(i2c) & I2C_IF_NACK) {
 			I2C_IFC(i2c) = I2C_IFC_NACK;
-			return -3;
+			return -4;
 		}
 
 		I2C_IFC(i2c) = I2C_IFC_ACK;
 		rem--;
 	}
 
-	I2C_CMD(i2c) = I2C_CMD_STOP;
+	if (stop) I2C_CMD(i2c) = I2C_CMD_STOP;
 
 	return 0;
 }
 
-int i2c_read(uint32_t i2c, uint8_t addr, uint8_t *rxdata, uint16_t len){
+int i2c_read(uint32_t i2c, uint8_t addr, uint8_t *rxdata, uint16_t len, bool stop){
 
 	if (len < 1) return -1;
 
@@ -162,8 +164,15 @@ int i2c_read(uint32_t i2c, uint8_t addr, uint8_t *rxdata, uint16_t len){
 
 		rxdata[len-rem] = I2C_RXDATA(i2c) & 0xFF;
 		rem--;
+
+		if (rem == 1 || len == 1){
+			I2C_CMD(i2c) = I2C_CMD_NACK;
+		}else if (rem > 1){
+			I2C_CMD(i2c) = I2C_CMD_ACK;
+		}
 	}
 
-	I2C_CMD(i2c) = I2C_CMD_STOP;
+	if (stop) I2C_CMD(i2c) = I2C_CMD_STOP;
+	I2C_IFC(i2c) = I2C_IFC_MSTOP;
 	return 0;
 }
