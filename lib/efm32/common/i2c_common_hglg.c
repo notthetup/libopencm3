@@ -27,8 +27,8 @@
  */
 void i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl){
 	if (!freqScl || !freqRef){ return; }
+	uint16_t n = 1;
 
-	/* Set the CLHR (clock low to high ratio) to 4:4. */
 	I2C_CTRL(i2c) &= ~I2C_CTRL_CLHR_MASK;
 
 	/* SCL frequency is given by
@@ -36,7 +36,25 @@ void i2c_bus_freq_set(uint32_t i2c, uint32_t freqRef, uint32_t freqScl){
 	 * DIV = ((freqRef - (I2C_CR_MAX * freqScl))/((Nlow + Nhigh) * freqScl)) - 1
 	 */
 
-	int32_t div = ((freqRef - (I2C_CR_MAX * freqScl)) / (8 * freqScl));
+	if (freqScl <= 100000) {
+		I2C_CTRL(i2c) |= I2C_CTRL_CLHR_STANDARD;
+		/* In I2C Normal mode (50% duty), we can go up to 100kHz */
+		n = 4+4;
+	} else if (freqScl <= 400000) {
+		/* In I2C Fast mode (6:3 ratio), we can go up to 400kHz */
+		I2C_CTRL(i2c) |= I2C_CTRL_CLHR_ASYMMETRIC;
+		n = 6+3;
+	} else if (freqScl <= 1000000) {
+		/* In I2C Fast+ mode (11:6 ratio), we can go up to 1 MHz */
+		I2C_CTRL(i2c) |= I2C_CTRL_CLHR_FAST;
+		n = 11+6;
+	} else {
+		freqScl = 1000000;
+		I2C_CTRL(i2c) |= I2C_CTRL_CLHR_FAST;
+		n = 11+6;
+	}
+
+	int32_t div = ((freqRef - (I2C_CR_MAX * freqScl)) / (n * freqScl)) - 1;
 	I2C_CLKDIV(i2c) = (uint32_t)div;
 }
 
